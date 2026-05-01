@@ -1,0 +1,13 @@
+streamlit
+rasterio
+geopandas
+numpy
+pandas
+scikit-learn
+folium
+streamlit-folium
+plotly
+shapely
+matplotlib
+matplotlib-scalebar
+contextily
