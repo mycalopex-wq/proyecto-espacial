@@ -110,7 +110,6 @@ def generar_mapa_tematico(raster_path, modo, bandas, escala, title):
 # -----------------------------
 with st.sidebar:
     st.header("Configuración Lite")
-    st.info("Ideal para análisis de cuencas como el Biobío o Petorca usando Sentinel-2.")
     
     sat_files = st.file_uploader("Subir Imágenes Satelitales (.tif)", type=["tif"], accept_multiple_files=True)
     v_file = st.file_uploader("Subir Vector Opcional (ZIP/GPKG)", type=["zip", "gpkg"])
