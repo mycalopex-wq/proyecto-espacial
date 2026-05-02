@@ -2,6 +2,7 @@
 import streamlit as st
 import rasterio
 from rasterio.io import MemoryFile
+import gpd
 import geopandas as gpd
 import numpy as np
 import pandas as pd
@@ -150,6 +151,9 @@ def inicializar_base(uas_file, sat_file, master_crs, master_gdf, col_clase):
         t_sat = tempfile.NamedTemporaryFile(delete=False, suffix=".tif")
         t_sat.write(sat_file.getvalue()); t_sat.close()
         data['sat_clip_path'] = reproject_raster(t_sat.name, master_crs.to_string())
+        data['has_sat'] = True
+    else:
+        data['has_sat'] = False
     return data
 
 def calcular_firmas(data_dict, col_clase, sat_scale, b_idx, g_idx, r_idx, re_idx, n_idx, s_b_idx, s_g_idx, s_r_idx, s_re_idx, s_n_idx, sat_name):
@@ -157,6 +161,7 @@ def calcular_firmas(data_dict, col_clase, sat_scale, b_idx, g_idx, r_idx, re_idx
     uas_bands = {name for idx, name in [(b_idx,"Azul"), (g_idx,"Verde"), (r_idx,"Rojo"), (re_idx,"Red Edge"), (n_idx,"NIR")] if idx > 0}
     sat_bands = {name for idx, name in [(s_b_idx,"Azul"), (s_g_idx,"Verde"), (s_r_idx,"Rojo"), (s_re_idx,"Red Edge"), (s_n_idx,"NIR")] if idx > 0}
     bandas_comunes = uas_bands.intersection(sat_bands) if data_dict['has_sat'] else set()
+    
     with rasterio.open(data_dict['uas_path_10m']) as uas:
         sat_src = rasterio.open(data_dict['sat_clip_path']) if data_dict['has_sat'] else None
         for _, row in data_dict['gdf_diss'].iterrows():
@@ -169,21 +174,23 @@ def calcular_firmas(data_dict, col_clase, sat_scale, b_idx, g_idx, r_idx, re_idx
             coordenadas = [(pt.x, pt.y) for pt in pts]
             muestras_uas = np.array(list(uas.sample(coordenadas))).astype(float)
             muestras_uas[muestras_uas <= 0] = np.nan
+            
             if sat_src:
                 muestras_sat = np.array(list(sat_src.sample(coordenadas))).astype(float) / sat_scale
                 muestras_sat[muestras_sat <= 0] = np.nan
                 mask_ambos = ~np.isnan(muestras_uas).any(axis=1) & ~np.isnan(muestras_sat).any(axis=1)
                 muestras_uas, muestras_sat = muestras_uas[mask_ambos], muestras_sat[mask_ambos]
-                if len(muestras_uas) == 0: continue
-                firma_sat = np.nanmean(muestras_sat, axis=0)
-                band_names_sat_map = {idx: name for idx, name in [(s_b_idx,"Azul"), (s_g_idx,"Verde"), (s_r_idx,"Rojo"), (s_re_idx,"Red Edge"), (s_n_idx,"NIR")] if idx > 0}
-                for b in range(sat_src.count):
-                    if (b+1) in band_names_sat_map: resultados.append({'Cobertura': row[col_clase], 'Banda': band_names_sat_map[b+1], 'Sensor': sat_name, 'Reflectancia': firma_sat[b]})
-                for nb in bandas_comunes:
-                    u_idx = {n: i for i, n in [(b_idx,"Azul"), (g_idx,"Verde"), (r_idx,"Rojo"), (re_idx,"Red Edge"), (n_idx,"NIR")] if i > 0}[nb] - 1
-                    s_idx = {n: i for i, n in [(s_b_idx,"Azul"), (s_g_idx,"Verde"), (s_r_idx,"Rojo"), (s_re_idx,"Red Edge"), (s_n_idx,"NIR")] if i > 0}[nb] - 1
-                    if u_idx < muestras_uas.shape[1] and s_idx < muestras_sat.shape[1]:
-                        for uv, sv in zip(muestras_uas[:, u_idx], muestras_sat[:, s_idx]): datos_correlacion.append({'Cobertura': row[col_clase], 'Banda': nb, 'UAS': uv, 'SAT': sv})
+                if len(muestras_uas) > 0:
+                    firma_sat = np.nanmean(muestras_sat, axis=0)
+                    band_names_sat_map = {idx: name for idx, name in [(s_b_idx,"Azul"), (s_g_idx,"Verde"), (s_r_idx,"Rojo"), (s_re_idx,"Red Edge"), (s_n_idx,"NIR")] if idx > 0}
+                    for b in range(sat_src.count):
+                        if (b+1) in band_names_sat_map: resultados.append({'Cobertura': row[col_clase], 'Banda': band_names_sat_map[b+1], 'Sensor': sat_name, 'Reflectancia': firma_sat[b]})
+                    for nb in bandas_comunes:
+                        u_idx = {n: i for i, n in [(b_idx,"Azul"), (g_idx,"Verde"), (r_idx,"Rojo"), (re_idx,"Red Edge"), (n_idx,"NIR")] if i > 0}[nb] - 1
+                        s_idx = {n: i for i, n in [(s_b_idx,"Azul"), (s_g_idx,"Verde"), (s_r_idx,"Rojo"), (s_re_idx,"Red Edge"), (s_n_idx,"NIR")] if i > 0}[nb] - 1
+                        if u_idx < muestras_uas.shape[1] and s_idx < muestras_sat.shape[1]:
+                            for uv, sv in zip(muestras_uas[:, u_idx], muestras_sat[:, s_idx]): datos_correlacion.append({'Cobertura': row[col_clase], 'Banda': nb, 'UAS': uv, 'SAT': sv})
+            
             firma_uas = np.nanmean(muestras_uas, axis=0)
             band_names_uas_map = {idx: name for idx, name in [(b_idx,"Azul"), (g_idx,"Verde"), (r_idx,"Rojo"), (re_idx,"Red Edge"), (n_idx,"NIR")] if idx > 0}
             for b in range(uas.count):
@@ -193,6 +200,8 @@ def calcular_firmas(data_dict, col_clase, sat_scale, b_idx, g_idx, r_idx, re_idx
 
 def pre_generar_plotly(df_firmas, df_corr, sat_name):
     pre_firmas, pre_corr = {}, {}
+    if df_firmas.empty: return pre_firmas, pre_corr
+    
     coberturas = df_firmas['Cobertura'].unique()
     for cob in coberturas:
         df_f = df_firmas[df_firmas['Cobertura'] == cob]
@@ -201,15 +210,18 @@ def pre_generar_plotly(df_firmas, df_corr, sat_name):
         fig_f.update_xaxes(categoryorder='array', categoryarray=["Azul", "Verde", "Rojo", "Red Edge", "NIR"])
         fig_f.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
         pre_firmas[cob] = fig_f
-        df_c = df_corr[df_corr['Cobertura'] == cob]
-        if not df_c.empty and len(df_c) > 2:
-            X, y = df_c['UAS'].values.reshape(-1, 1), df_c['SAT'].values
-            mod = LinearRegression().fit(X, y); r2 = r2_score(y, mod.predict(X))
-            fig_c = px.scatter(df_c, x="UAS", y="SAT", color="Banda", title=f"{cob} (R²={r2:.3f})")
-            x_min, x_max = X.min(), X.max()
-            fig_c.add_trace(go.Scatter(x=[x_min, x_max], y=mod.predict([[x_min], [x_max]]), mode='lines', name='Tendencia', line=dict(color='black', width=2, dash='dot')))
-            fig_c.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
-            pre_corr[cob] = fig_c
+        
+        # VALIDACIÓN DE COLUMNAS PARA EVITAR KEYERROR
+        if not df_corr.empty and 'Cobertura' in df_corr.columns:
+            df_c = df_corr[df_corr['Cobertura'] == cob]
+            if not df_c.empty and len(df_c) > 5:
+                X, y = df_c['UAS'].values.reshape(-1, 1), df_c['SAT'].values
+                mod = LinearRegression().fit(X, y); r2 = r2_score(y, mod.predict(X))
+                fig_c = px.scatter(df_c, x="UAS", y="SAT", color="Banda", title=f"{cob} (R²={r2:.3f})")
+                x_min, x_max = X.min(), X.max()
+                fig_c.add_trace(go.Scatter(x=[x_min, x_max], y=mod.predict([[x_min], [x_max]]), mode='lines', name='Tendencia', line=dict(color='black', width=2, dash='dot')))
+                fig_c.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
+                pre_corr[cob] = fig_c
     return pre_firmas, pre_corr
 
 def generar_mapa_crudo(data_dict, sensor_sel, vis_mode, b_idx, g_idx, r_idx, re_idx, n_idx, s_b_idx, s_g_idx, s_r_idx, s_re_idx, s_n_idx, sat_scale, escena_name, banda_sel=1):
@@ -222,6 +234,7 @@ def generar_mapa_crudo(data_dict, sensor_sel, vis_mode, b_idx, g_idx, r_idx, re_
             out = np.full((base_src.height, base_src.width), np.nan, dtype=np.float32)
             if not is_sat: out = base_src.read(int(idx_u)).astype(float) if 0 < idx_u <= base_src.count else out
             else:
+                if not data_dict.get('sat_clip_path'): return out
                 with rasterio.open(data_dict['sat_clip_path']) as ss:
                     if 0 < idx_s <= ss.count: reproject(rasterio.band(ss, int(idx_s)), out, src_transform=ss.transform, src_crs=ss.crs, dst_transform=base_src.transform, dst_crs=base_src.crs, resampling=Resampling.bilinear)
                     out /= sat_scale
@@ -253,7 +266,7 @@ def generar_todos_pre_mapas(data_dict, sat_scale, b_idx, g_idx, r_idx, re_idx, n
     pre_mapas = {}
     modos_pre = ["RGB (Color Real)", "Falso Color (NIR-R-G)", "NDVI"]
     sensores_pre = ["UAS"]
-    if data_dict['has_sat']: sensores_pre.append("Satelite")
+    if data_dict.get('has_sat'): sensores_pre.append("Satelite")
     for sensor in sensores_pre:
         for modo in modos_pre:
             pre_mapas[f"{sensor}_{modo}"] = generar_mapa_crudo(data_dict, sensor, modo, b_idx, g_idx, r_idx, re_idx, n_idx, s_b_idx, s_g_idx, s_r_idx, s_re_idx, s_n_idx, sat_scale, escena_name)
@@ -288,7 +301,7 @@ with st.sidebar:
             for e in archivos_escenas:
                 name = parse_scene_name(e['uas'].name)
                 db = inicializar_base(e['uas'], e['sat'], master_crs, raw_gdf, col_clase_input)
-                db['has_sat'] = (e['sat'] is not None); st.session_state.data_escenas[name] = db
+                st.session_state.data_escenas[name] = db
             st.session_state.analisis_listo = True
     if st.button("Reiniciar Entorno"): st.session_state.clear(); st.rerun()
 
@@ -303,12 +316,9 @@ if st.session_state.get("analisis_listo"):
         with tabs[idx]:
             d = st.session_state.data_escenas[name]
             st.subheader(f"Resultados: {name}")
-            
-            # --- MAPA Y TORTA ---
             col_mapa, col_torta = st.columns([2, 1])
             if 'color_map' not in st.session_state:
                 st.session_state.color_map = {c: '#%06x' % random.randint(0, 0xFFFFFF) for c in st.session_state.master_gdf[col_clase_input].unique()}
-            
             with col_mapa:
                 gdf_map = d['gdf'].to_crs(epsg=4326)
                 m = folium.Map(location=[gdf_map.total_bounds[[1,3]].mean(), gdf_map.total_bounds[[0,2]].mean()], zoom_start=15)
@@ -316,29 +326,25 @@ if st.session_state.get("analisis_listo"):
                 gdf_map["color"] = gdf_map[col_clase_input].map(st.session_state.color_map)
                 folium.GeoJson(gdf_map, style_function=lambda f: {'fillColor': f['properties']['color'], 'color': 'white', 'weight': 1, 'fillOpacity': 0.6}).add_to(m)
                 st_folium(m, width=800, height=400, returned_objects=[], key=f"folium_{name}")
-
             with col_torta:
                 df_stats = d['gdf_diss'].copy()
                 st.metric("Total Hectáreas", f"{df_stats['area_m2'].sum()/10000:.2f} ha")
                 fig_pie = px.pie(df_stats, values='area_m2', names=col_clase_input, hole=0.4, color=col_clase_input, color_discrete_map=st.session_state.color_map)
                 st.plotly_chart(fig_pie, width="stretch")
-
-            # --- CARGA PERRO HACKER ---
+            
             if 'pre_m' not in d:
                 loading_ph = st.empty()
                 with loading_ph.container():
                     st.markdown("<h3 style='text-align: center;'>Procesando escena espacial...</h3>", unsafe_allow_html=True)
                     col1, col2, col3 = st.columns([1,1,1]); col2.image(DOG_GIF_URL, width="stretch")
                     status_text, pbar = st.empty(), st.progress(0)
-                    status_text.info("Paso 1/3: Muestreo radiométrico Monte Carlo..."); df_f, df_c = calcular_firmas(d, col_clase_input, sat_scale, u_b, u_g, u_r, u_re, u_n, s_b, s_g, s_r, s_re, s_n, sat_name)
+                    status_text.info("Paso 1/3: Muestreo radiométrico..."); df_f, df_c = calcular_firmas(d, col_clase_input, sat_scale, u_b, u_g, u_r, u_re, u_n, s_b, s_g, s_r, s_re, s_n, sat_name)
                     d['df_firmas'], d['df_corr'] = df_f, df_c; pbar.progress(33)
-                    status_text.info("Paso 2/3: Modelando regresiones lineales..."); d['pre_p_f'], d['pre_p_c'] = pre_generar_plotly(df_f, df_c, sat_name); pbar.progress(66)
-                    status_text.info("Paso 3/3: Renderizando mapas cartográficos..."); d['pre_m'] = generar_todos_pre_mapas(d, sat_scale, u_b, u_g, u_r, u_re, u_n, s_b, s_g, s_r, s_re, s_n, name); pbar.progress(100)
+                    status_text.info("Paso 2/3: Modelando regresiones..."); d['pre_p_f'], d['pre_p_c'] = pre_generar_plotly(df_f, df_c, sat_name); pbar.progress(66)
+                    status_text.info("Paso 3/3: Renderizando mapas..."); d['pre_m'] = generar_todos_pre_mapas(d, sat_scale, u_b, u_g, u_r, u_re, u_n, s_b, s_g, s_r, s_re, s_n, name); pbar.progress(100)
                 st.session_state.data_escenas[name] = d; loading_ph.empty()
 
-            # --- SUB-PESTAÑAS DE ESCENA ---
             sub_tabs = st.tabs(["Cartografía", "Análisis por Cobertura", "Summary de Escena"])
-            
             with sub_tabs[0]:
                 s_sel = st.tabs(["UAS", "Satelite"]) if d['has_sat'] else [st.container()]
                 for i, sensor in enumerate(["UAS", "Satelite"] if d['has_sat'] else ["UAS"]):
@@ -349,75 +355,50 @@ if st.session_state.get("analisis_listo"):
                         with m_tabs[3]:
                             banda_sel = st.selectbox("Seleccione Banda:", range(1, 6), key=f"bp_{name}_{sensor}")
                             st.image(generar_mapa_crudo(d, sensor, "Banda Pura", u_b, u_g, u_r, u_re, u_n, s_b, s_g, s_r, s_re, s_n, sat_scale, name, banda_sel), width="stretch")
-            
             with sub_tabs[1]:
                 cobs = d['df_firmas']['Cobertura'].unique(); cols = st.columns(3)
                 for i, c in enumerate(cobs):
                     with cols[i%3]: st.plotly_chart(d['pre_p_f'][c], width="stretch")
-            
             with sub_tabs[2]:
                 st.subheader(f"Resumen Radiométrico: {name}")
                 if d['has_sat'] and not d['df_corr'].empty:
-                    # R2 Local de esta escena
                     r2_list_escena = []
                     for c in cobs:
-                        df_sub = d['df_corr'][d['df_corr']['Cobertura'] == c]
-                        if len(df_sub) > 5:
-                            mod = LinearRegression().fit(df_sub[['UAS']], df_sub['SAT'])
-                            r2_list_escena.append({'Cobertura': c, 'R2': r2_score(df_sub['SAT'], mod.predict(df_sub[['UAS']]))})
+                        if 'Cobertura' in d['df_corr'].columns:
+                            df_sub = d['df_corr'][d['df_corr']['Cobertura'] == c]
+                            if len(df_sub) > 5:
+                                mod = LinearRegression().fit(df_sub[['UAS']], df_sub['SAT'])
+                                r2_list_escena.append({'Cobertura': c, 'R2': r2_score(df_sub['SAT'], mod.predict(df_sub[['UAS']]))})
                     if r2_list_escena:
-                        st.plotly_chart(px.bar(pd.DataFrame(r2_list_escena), x='Cobertura', y='R2', color='R2', color_continuous_scale='Viridis', title="Ajuste Radiométrico UAS vs Satélite (Escena Actual)"), width="stretch")
-                
-                st.markdown("**Regresiones Lineales de la Escena**")
+                        st.plotly_chart(px.bar(pd.DataFrame(r2_list_escena), x='Cobertura', y='R2', color='R2', title="Ajuste Radiométrico (Escena Actual)"), width="stretch")
                 cols = st.columns(3)
                 for i, c in enumerate(cobs):
-                    if c in d['pre_p_c']:
+                    if c in d.get('pre_p_c', {}):
                         with cols[i%3]: st.plotly_chart(d['pre_p_c'][c], width="stretch")
 
-    # --- PESTAÑA COMPARACIÓN GLOBAL ---
     if len(names) > 0:
         with tabs[-1]:
             st.header("Análisis Comparativo Global")
-            all_f = pd.concat([st.session_state.data_escenas[n]['df_firmas'].assign(Escena=n) for n in names])
-            cobs = all_f['Cobertura'].unique()
-            gt1, gt2, gt3 = st.tabs(["Evolución UAS", "Evolución Satélite", "Resumen de Ajuste (R²)"])
-            
-            with gt1:
-                cols = st.columns(3)
-                for i, c in enumerate(cobs):
-                    df_c = all_f[(all_f['Cobertura']==c) & (all_f['Sensor']=='UAS')]
-                    fig = px.line(df_c, x="Banda", y="Reflectancia", color="Escena", markers=True, title=f"UAS: {c}")
-                    fig.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
-                    with cols[i%3]: st.plotly_chart(fig, width="stretch")
-            
-            with gt2:
-                cols = st.columns(3)
-                for i, c in enumerate(cobs):
-                    df_c = all_f[(all_f['Cobertura']==c) & (all_f['Sensor']==sat_name)]
-                    if not df_c.empty:
-                        fig = px.line(df_c, x="Banda", y="Reflectancia", color="Escena", markers=True, title=f"Sat: {c}")
-                        fig.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
+            all_f_list = [st.session_state.data_escenas[n]['df_firmas'].assign(Escena=n) for n in names if not st.session_state.data_escenas[n]['df_firmas'].empty]
+            if all_f_list:
+                all_f = pd.concat(all_f_list)
+                cobs = all_f['Cobertura'].unique()
+                gt1, gt2, gt3 = st.tabs(["Evolución UAS", "Evolución Satélite", "Resumen de Ajuste (R²)"])
+                with gt1:
+                    cols = st.columns(3)
+                    for i, c in enumerate(cobs):
+                        df_c = all_f[(all_f['Cobertura']==c) & (all_f['Sensor']=='UAS')]
+                        fig = px.line(df_c, x="Banda", y="Reflectancia", color="Escena", markers=True, title=f"UAS: {c}")
                         with cols[i%3]: st.plotly_chart(fig, width="stretch")
-            
-            with gt3:
-                all_c = pd.concat([st.session_state.data_escenas[n]['df_corr'] for n in names if st.session_state.data_escenas[n]['has_sat']])
-                if not all_c.empty:
-                    r2_list = []
-                    for c in cobs:
-                        df_sub = all_c[all_c['Cobertura'] == c]
-                        if len(df_sub) > 5:
-                            mod = LinearRegression().fit(df_sub[['UAS']], df_sub['SAT'])
-                            r2_list.append({'Cobertura': c, 'R2': r2_score(df_sub['SAT'], mod.predict(df_sub[['UAS']]))})
-                    if r2_list:
-                        st.plotly_chart(px.bar(pd.DataFrame(r2_list), x='Cobertura', y='R2', color='R2', color_continuous_scale='Viridis', title="Ajuste Radiométrico Global"), width="stretch")
-                        st.markdown("### Regresiones Consolidadas")
-                        cols = st.columns(3)
-                        for i, c in enumerate(cobs):
+                with gt3:
+                    all_c_list = [st.session_state.data_escenas[n]['df_corr'] for n in names if st.session_state.data_escenas[n]['has_sat'] and not st.session_state.data_escenas[n]['df_corr'].empty]
+                    if all_c_list:
+                        all_c = pd.concat(all_c_list)
+                        r2_list = []
+                        for c in cobs:
                             df_sub = all_c[all_c['Cobertura'] == c]
-                            if not df_sub.empty:
-                                mod_g = LinearRegression().fit(df_sub[['UAS']], df_sub['SAT'])
-                                r2_g = r2_score(df_sub['SAT'], mod_g.predict(df_sub[['UAS']]))
-                                fig = px.scatter(df_sub, x="UAS", y="SAT", color="Banda", title=f"{c} (R² = {r2_g:.3f})")
-                                fig.add_trace(go.Scatter(x=[df_sub['UAS'].min(), df_sub['UAS'].max()], y=mod_g.predict([[df_sub['UAS'].min()], [df_sub['UAS'].max()]]), mode='lines', name='Tendencia', line=dict(color='black', width=2, dash='dot')))
-                                fig.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
-                                with cols[i%3]: st.plotly_chart(fig, width="stretch")
+                            if len(df_sub) > 5:
+                                mod = LinearRegression().fit(df_sub[['UAS']], df_sub['SAT'])
+                                r2_list.append({'Cobertura': c, 'R2': r2_score(df_sub['SAT'], mod.predict(df_sub[['UAS']]))})
+                        if r2_list:
+                            st.plotly_chart(px.bar(pd.DataFrame(r2_list), x='Cobertura', y='R2', color='R2', title="Ajuste Radiométrico Global"), width="stretch")
