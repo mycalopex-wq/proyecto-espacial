@@ -290,7 +290,7 @@ with st.sidebar:
     sat_name = st.text_input("Satélite", "Sentinel-2"); sat_scale = st.number_input("Factor Escala", 10000.0)
     c1, c2 = st.columns(2)
     with c1: u_b, u_g, u_r, u_re, u_n = st.number_input("U-B",1), st.number_input("U-G",2), st.number_input("U-R",3), st.number_input("U-RE",4), st.number_input("U-N",5)
-    with c2: s_b, s_g, s_r, s_re, s_n = st.number_input("S-B",1), st.number_input("S-G",2), st.number_input("S-R",3), st.number_input("S-RE",0), st.number_input("S-N",4)
+    with c2: s_b, s_g, s_r, s_re, s_n = st.number_input("S-B",1), st.number_input("S-G",2), st.number_input("S-R",3), st.number_input("S-RE",4), st.number_input("S-N",5)
     
     if st.button("Ejecutar Análisis Espacial", width="stretch"):
         # OTRO PARCHE DE SEGURIDAD AQUI
