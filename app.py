@@ -313,8 +313,8 @@ with st.sidebar:
             s_b = st.number_input("Azul", 1, key="s_b")
             s_g = st.number_input("Verde", 2, key="s_g")
             s_r = st.number_input("Rojo", 3, key="s_r")
-            s_re = st.number_input("Red Edge", 0, key="s_re")
-            s_n = st.number_input("NIR", 4, key="s_n")
+            s_re = st.number_input("Red Edge", 4, key="s_re")
+            s_n = st.number_input("NIR", 5, key="s_n")
 
     st.divider()
     if st.button("Ejecutar Análisis Espacial", width="stretch"):
