@@ -68,19 +68,22 @@ def reproject_raster(in_path, target_crs_str):
     return reproj_path
 
 @st.cache_data
-@st.cache_data
-def resample_raster(in_path, target_res=10.0): # Subí el target a 10m para que el análisis sea más liviano
+def resample_raster(in_path, target_res=10.0): 
     with rasterio.open(in_path) as src:
-        # Si la imagen ya es liviana, no hacemos nada
         if src.res[0] >= target_res: return in_path
-        
-        new_width = int((src.bounds.right - src.bounds.left) / target_res)
-        new_height = int((src.bounds.top - src.bounds.bottom) / target_res)
-        
-        # Limitamos el tamaño máximo para que no explote la RAM
-        if new_width > 5000 or new_height > 5000:
-             target_res = target_res * 2 # Bajamos la resolución si es demasiado grande
-             
+        new_width = max(int((src.bounds.right - src.bounds.left) / target_res), 1)
+        new_height = max(int((src.bounds.top - src.bounds.bottom) / target_res), 1)
+        new_transform = from_bounds(*src.bounds, new_width, new_height)
+        kwargs = src.meta.copy()
+        kwargs.update({'transform': new_transform, 'width': new_width, 'height': new_height, 'compress': 'lzw'})
+        out_path = tempfile.NamedTemporaryFile(delete=False, suffix=".tif").name
+        with rasterio.open(out_path, 'w', **kwargs) as dst:
+            for i in range(1, src.count + 1):
+                reproject(source=rasterio.band(src, i), destination=rasterio.band(dst, i),
+                          src_transform=src.transform, src_crs=src.crs, dst_transform=new_transform, dst_crs=src.crs,
+                          resampling=Resampling.bilinear)
+    return out_path
+
 def add_cartographic_elements(ax, crs_is_metric, title):
     ax.set_title(title, pad=20, fontsize=14, color='black', weight='bold')
     ax.tick_params(axis='both', colors='black', labelsize=8)
