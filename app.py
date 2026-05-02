@@ -1,9 +1,8 @@
-# hola
 # -*- coding: utf-8 -*-
 import streamlit as st
 import rasterio
 from rasterio.io import MemoryFile
-import geopandas as gpd  # Corregido: antes decía 'import gpd'
+import geopandas as gpd
 import numpy as np
 import pandas as pd
 from rasterio.mask import mask
@@ -254,6 +253,9 @@ def generar_mapa_crudo(data_dict, sensor_sel, vis_mode, b_idx, g_idx, r_idx, re_
             c2 = norm(obt_banda(r_idx, s_r_idx) if "Falso" in vis_mode else obt_banda(g_idx, s_g_idx))
             c3 = norm(obt_banda(g_idx, s_g_idx) if "Falso" in vis_mode else obt_banda(b_idx, s_b_idx))
             ax.imshow(np.dstack([np.nan_to_num(c1, nan=1.0), np.nan_to_num(c2, nan=1.0), np.nan_to_num(c3, nan=1.0), np.where(np.isnan(c1), 0, 1)]), extent=ext, interpolation='bicubic')
+        elif "Banda Pura" in vis_mode:
+            b_norm = norm(obt_banda(banda_sel, banda_sel))
+            ax.imshow(b_norm, cmap='gray', extent=ext, interpolation='bicubic')
         add_cartographic_elements(ax, True, f"{vis_mode} - {escena_name}"); create_context_maps(axr, axn, data_dict['gdf'])
         fig.subplots_adjust(left=0.02, right=0.98, wspace=0.1)
         buf = io.BytesIO(); fig.savefig(buf, format="png", bbox_inches='tight', facecolor='white'); plt.close(fig); return buf.getvalue()
@@ -269,37 +271,67 @@ def generar_todos_pre_mapas(data_dict, sat_scale, b_idx, g_idx, r_idx, re_idx, n
     return pre_mapas
 
 # -----------------------------
-# 3. INTERFAZ (SIDEBAR)
+# 3. INTERFAZ (SIDEBAR COMPLETO RESTAURADO)
 # -----------------------------
 col_clase_input = None
 with st.sidebar:
     st.header("Configuración del Análisis")
-    vector_file = st.file_uploader("Archivo Vectorial", type=["zip", "gpkg"])
-    if vector_file:
-        preview_gdf = load_vector_preview(vector_file); st.session_state.raw_gdf = preview_gdf
-        col_clase_input = st.selectbox("Columna Clase:", [c for c in preview_gdf.columns if c != 'geometry'])
-    num_escenas = st.number_input("Cantidad Escenas", 1, 10, 1)
+    with st.expander("Archivo Vectorial Global", expanded=True):
+        vector_file = st.file_uploader("Archivo Vectorial", type=["zip", "gpkg"])
+        if vector_file:
+            preview_gdf = load_vector_preview(vector_file); st.session_state.raw_gdf = preview_gdf
+            resumen_columnas = [{"Columna": c, "Ejemplos": ", ".join(map(str, preview_gdf[c].dropna().unique()[:3]))} for c in preview_gdf.columns if c != 'geometry']
+            st.dataframe(pd.DataFrame(resumen_columnas), hide_index=True, width="stretch")
+            col_clase_input = st.selectbox("Columna Clase:", [c for c in preview_gdf.columns if c != 'geometry'])
+
+    st.divider()
+    st.markdown("**Gestión de Escenas**")
+    num_escenas = st.number_input("Cantidad de Escenas", 1, 10, 1)
     archivos_escenas = []
     for i in range(1, num_escenas + 1):
-        with st.expander(f"Archivos Escena {i}"):
-            archivos_escenas.append({"id": i, "uas": st.file_uploader(f"UAS {i}", type=["tif"]), "sat": st.file_uploader(f"SAT {i}", type=["tif"])})
-    sat_name = st.text_input("Satélite", "Sentinel-2"); sat_scale = st.number_input("Factor Escala", 10000.0)
-    c1, c2 = st.columns(2)
-    with c1: u_b, u_g, u_r, u_re, u_n = st.number_input("U-B",1), st.number_input("U-G",2), st.number_input("U-R",3), st.number_input("U-RE",4), st.number_input("U-N",5)
-    with c2: s_b, s_g, s_r, s_re, s_n = st.number_input("S-B",1), st.number_input("S-G",2), st.number_input("S-R",3), st.number_input("S-RE",0), st.number_input("S-N",4)
+        with st.expander(f"Archivos Escena {i}", expanded=(i==1)):
+            archivos_escenas.append({
+                "id": i, 
+                "uas": st.file_uploader(f"Raster UAS (E{i})", type=["tif"]), 
+                "sat": st.file_uploader(f"Raster SAT (E{i})", type=["tif"])
+            })
+
+    st.divider()
+    with st.expander("Configuración de Sensores y Bandas"):
+        sat_name = st.text_input("Nombre del Satélite", "Sentinel-2")
+        sat_scale = st.number_input("Factor Escala", 10000.0)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**UAS**")
+            u_b = st.number_input("Azul", 1, key="u_b")
+            u_g = st.number_input("Verde", 2, key="u_g")
+            u_r = st.number_input("Rojo", 3, key="u_r")
+            u_re = st.number_input("Red Edge", 4, key="u_re")
+            u_n = st.number_input("NIR", 5, key="u_n")
+        with c2:
+            st.markdown("**SAT**")
+            s_b = st.number_input("Azul", 1, key="s_b")
+            s_g = st.number_input("Verde", 2, key="s_g")
+            s_r = st.number_input("Rojo", 3, key="s_r")
+            s_re = st.number_input("Red Edge", 0, key="s_re")
+            s_n = st.number_input("NIR", 4, key="s_n")
+
+    st.divider()
     if st.button("Ejecutar Análisis Espacial", width="stretch"):
-        with st.spinner("Preparando entorno..."):
-            with MemoryFile(archivos_escenas[0]['uas'].getvalue()) as mem: master_crs = mem.open().crs
-            st.session_state.master_gdf = st.session_state.raw_gdf.to_crs(master_crs); st.session_state.data_escenas = {}
-            for e in archivos_escenas:
-                name = parse_scene_name(e['uas'].name)
-                db = inicializar_base(e['uas'], e['sat'], master_crs, st.session_state.master_gdf, col_clase_input)
-                st.session_state.data_escenas[name] = db
-            st.session_state.analisis_listo = True
+        if vector_file and archivos_escenas[0]['uas']:
+            with st.spinner("Preparando entorno..."):
+                with MemoryFile(archivos_escenas[0]['uas'].getvalue()) as mem: master_crs = mem.open().crs
+                st.session_state.master_gdf = st.session_state.raw_gdf.to_crs(master_crs); st.session_state.data_escenas = {}
+                for e in archivos_escenas:
+                    if e['uas']:
+                        name = parse_scene_name(e['uas'].name)
+                        db = inicializar_base(e['uas'], e['sat'], master_crs, st.session_state.master_gdf, col_clase_input)
+                        st.session_state.data_escenas[name] = db
+                st.session_state.analisis_listo = True
     if st.button("Reiniciar Entorno"): st.session_state.clear(); st.rerun()
 
 # -----------------------------
-# 5. RENDERIZADO PROGRESIVO
+# 4. RENDERIZADO
 # -----------------------------
 if st.session_state.get("analisis_listo"):
     names = list(st.session_state.data_escenas.keys())
@@ -308,7 +340,7 @@ if st.session_state.get("analisis_listo"):
     for idx, name in enumerate(names):
         with tabs[idx]:
             d = st.session_state.data_escenas[name]
-            st.subheader(f"Resultados: {name}")
+            st.subheader(f"Escena: {name}")
             col_mapa, col_torta = st.columns([2, 1])
             if 'color_map' not in st.session_state:
                 st.session_state.color_map = {c: '#%06x' % random.randint(0, 0xFFFFFF) for c in st.session_state.master_gdf[col_clase_input].unique()}
@@ -339,11 +371,15 @@ if st.session_state.get("analisis_listo"):
 
             sub_tabs = st.tabs(["Cartografía", "Análisis por Cobertura", "Summary de Escena"])
             with sub_tabs[0]:
-                for s in (["UAS", "Satelite"] if d['has_sat'] else ["UAS"]):
-                    st.markdown(f"**Sensores: {s}**")
-                    cols = st.columns(3)
-                    for j, m in enumerate(["RGB (Color Real)", "Falso Color (NIR-R-G)", "NDVI"]):
-                        with cols[j]: st.image(d['pre_m'][f"{s}_{m}"], width="stretch")
+                s_sel = st.tabs(["UAS", "Satelite"]) if d['has_sat'] else [st.container()]
+                for i, sensor in enumerate(["UAS", "Satelite"] if d['has_sat'] else ["UAS"]):
+                    with s_sel[i]:
+                        m_tabs = st.tabs(["RGB", "Falso Color", "NDVI", "Banda Pura"])
+                        for j, m in enumerate(["RGB (Color Real)", "Falso Color (NIR-R-G)", "NDVI"]):
+                            with m_tabs[j]: st.image(d['pre_m'][f"{sensor}_{m}"], width="stretch")
+                        with m_tabs[3]:
+                            banda_sel = st.selectbox("Seleccione Banda:", range(1, 6), key=f"bp_{name}_{sensor}")
+                            st.image(generar_mapa_crudo(d, sensor, "Banda Pura", u_b, u_g, u_r, u_re, u_n, s_b, s_g, s_r, s_re, s_n, sat_scale, name, banda_sel), width="stretch")
             with sub_tabs[1]:
                 cobs = d['df_firmas']['Cobertura'].unique(); cols = st.columns(3)
                 for i, c in enumerate(cobs):
@@ -360,3 +396,7 @@ if st.session_state.get("analisis_listo"):
                                 r2_list_escena.append({'Cobertura': c, 'R2': r2_score(df_sub['SAT'], mod.predict(df_sub[['UAS']]))})
                     if r2_list_escena:
                         st.plotly_chart(px.bar(pd.DataFrame(r2_list_escena), x='Cobertura', y='R2', color='R2', title="Ajuste Radiométrico (Escena Actual)"), width="stretch")
+                cols = st.columns(3)
+                for i, c in enumerate(cobs):
+                    if c in d.get('pre_p_c', {}):
+                        with cols[i%3]: st.plotly_chart(d['pre_p_c'][c], width="stretch")
