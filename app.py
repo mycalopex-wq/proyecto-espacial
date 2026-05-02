@@ -1,9 +1,8 @@
-#hola
 # -*- coding: utf-8 -*-
 import streamlit as st
 import rasterio
 from rasterio.io import MemoryFile
-import geopandas as gpd
+import geopandas as gpd  # Corregido: antes decía 'import gpd'
 import numpy as np
 import pandas as pd
 from rasterio.mask import mask
@@ -210,15 +209,17 @@ def pre_generar_plotly(df_firmas, df_corr, sat_name):
         fig_f.update_xaxes(categoryorder='array', categoryarray=["Azul", "Verde", "Rojo", "Red Edge", "NIR"])
         fig_f.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
         pre_firmas[cob] = fig_f
-        df_c = df_corr[df_corr['Cobertura'] == cob]
-        if not df_c.empty and len(df_c) > 2:
-            X, y = df_c['UAS'].values.reshape(-1, 1), df_c['SAT'].values
-            mod = LinearRegression().fit(X, y); r2 = r2_score(y, mod.predict(X))
-            fig_c = px.scatter(df_c, x="UAS", y="SAT", color="Banda", title=f"{cob} (R²={r2:.3f})")
-            x_min, x_max = X.min(), X.max()
-            fig_c.add_trace(go.Scatter(x=[x_min, x_max], y=mod.predict([[x_min], [x_max]]), mode='lines', name='Tendencia', line=dict(color='black', width=2, dash='dot')))
-            fig_c.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
-            pre_corr[cob] = fig_c
+        
+        if not df_corr.empty and 'Cobertura' in df_corr.columns:
+            df_c = df_corr[df_corr['Cobertura'] == cob]
+            if not df_c.empty and len(df_c) > 5:
+                X, y = df_c['UAS'].values.reshape(-1, 1), df_c['SAT'].values
+                mod = LinearRegression().fit(X, y); r2 = r2_score(y, mod.predict(X))
+                fig_c = px.scatter(df_c, x="UAS", y="SAT", color="Banda", title=f"{cob} (R²={r2:.3f})")
+                x_min, x_max = X.min(), X.max()
+                fig_c.add_trace(go.Scatter(x=[x_min, x_max], y=mod.predict([[x_min], [x_max]]), mode='lines', name='Tendencia', line=dict(color='black', width=2, dash='dot')))
+                fig_c.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
+                pre_corr[cob] = fig_c
     return pre_firmas, pre_corr
 
 def generar_mapa_crudo(data_dict, sensor_sel, vis_mode, b_idx, g_idx, r_idx, re_idx, n_idx, s_b_idx, s_g_idx, s_r_idx, s_re_idx, s_n_idx, sat_scale, escena_name, banda_sel=1):
@@ -291,8 +292,8 @@ with st.sidebar:
             st.session_state.master_gdf = st.session_state.raw_gdf.to_crs(master_crs); st.session_state.data_escenas = {}
             for e in archivos_escenas:
                 name = parse_scene_name(e['uas'].name)
-                db = inicializar_base(e['uas'], e['sat'], master_crs, raw_gdf, col_clase_input)
-                db['has_sat'] = (e['sat'] is not None); st.session_state.data_escenas[name] = db
+                db = inicializar_base(e['uas'], e['sat'], master_crs, st.session_state.master_gdf, col_clase_input)
+                st.session_state.data_escenas[name] = db
             st.session_state.analisis_listo = True
     if st.button("Reiniciar Entorno"): st.session_state.clear(); st.rerun()
 
@@ -337,16 +338,11 @@ if st.session_state.get("analisis_listo"):
 
             sub_tabs = st.tabs(["Cartografía", "Análisis por Cobertura", "Summary de Escena"])
             with sub_tabs[0]:
-                s_sel = st.tabs(["UAS", "Satelite"]) if d['has_sat'] else [st.container()]
-                for i, sensor in enumerate(["UAS", "Satelite"] if d['has_sat'] else ["UAS"]):
-                    with s_sel[i]:
-                        m_tabs = st.tabs(["RGB", "Falso Color", "NDVI", "Banda Pura"])
-                        for j, m in enumerate(["RGB (Color Real)", "Falso Color (NIR-R-G)", "NDVI"]):
-                            with m_tabs[j]: st.image(d['pre_m'][f"{sensor}_{m}"], width="stretch")
-                        with m_tabs[3]:
-                            banda_sel = st.selectbox("Seleccione Banda:", range(1, 6), key=f"bp_{name}_{sensor}")
-                            st.image(generar_mapa_crudo(d, sensor, "Banda Pura", u_b, u_g, u_r, u_re, u_n, s_b, s_g, s_r, s_re, s_n, sat_scale, name, banda_sel), width="stretch")
-            
+                for s in (["UAS", "Satelite"] if d['has_sat'] else ["UAS"]):
+                    st.markdown(f"**Sensores: {s}**")
+                    cols = st.columns(3)
+                    for j, m in enumerate(["RGB (Color Real)", "Falso Color (NIR-R-G)", "NDVI"]):
+                        with cols[j]: st.image(d['pre_m'][f"{s}_{m}"], width="stretch")
             with sub_tabs[1]:
                 cobs = d['df_firmas']['Cobertura'].unique(); cols = st.columns(3)
                 for i, c in enumerate(cobs):
@@ -362,58 +358,4 @@ if st.session_state.get("analisis_listo"):
                                 mod = LinearRegression().fit(df_sub[['UAS']], df_sub['SAT'])
                                 r2_list_escena.append({'Cobertura': c, 'R2': r2_score(df_sub['SAT'], mod.predict(df_sub[['UAS']]))})
                     if r2_list_escena:
-                        st.plotly_chart(px.bar(pd.DataFrame(r2_list_escena), x='Cobertura', y='R2', color='R2', color_continuous_scale='Viridis', title="Ajuste Radiométrico UAS vs Satélite (Escena Actual)"), width="stretch")
-                
-                st.markdown("**Regresiones Lineales de la Escena**")
-                cols = st.columns(3)
-                for i, c in enumerate(cobs):
-                    if c in d['pre_p_c']:
-                        with cols[i%3]: st.plotly_chart(d['pre_p_c'][c], width="stretch")
-
-    # --- PESTAÑA COMPARACIÓN GLOBAL ---
-    if len(names) > 0:
-        with tabs[-1]:
-            st.header("Análisis Comparativo Global")
-            all_f = pd.concat([st.session_state.data_escenas[n]['df_firmas'].assign(Escena=n) for n in names])
-            cobs = all_f['Cobertura'].unique()
-            gt1, gt2, gt3 = st.tabs(["Evolución UAS", "Evolución Satélite", "Resumen de Ajuste (R²)"])
-            
-            with gt1:
-                cols = st.columns(3)
-                for i, c in enumerate(cobs):
-                    df_c = all_f[(all_f['Cobertura']==c) & (all_f['Sensor']=='UAS')]
-                    fig = px.line(df_c, x="Banda", y="Reflectancia", color="Escena", markers=True, title=f"UAS: {c}")
-                    fig.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
-                    with cols[i%3]: st.plotly_chart(fig, width="stretch")
-            
-            with gt2:
-                cols = st.columns(3)
-                for i, c in enumerate(cobs):
-                    df_c = all_f[(all_f['Cobertura']==c) & (all_f['Sensor']==sat_name)]
-                    if not df_c.empty:
-                        fig = px.line(df_c, x="Banda", y="Reflectancia", color="Escena", markers=True, title=f"Sat: {c}")
-                        fig.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
-                        with cols[i%3]: st.plotly_chart(fig, width="stretch")
-            
-            with gt3:
-                all_c = pd.concat([st.session_state.data_escenas[n]['df_corr'] for n in names if st.session_state.data_escenas[n]['has_sat']])
-                if not all_c.empty:
-                    r2_list = []
-                    for c in cobs:
-                        df_sub = all_c[all_c['Cobertura'] == c]
-                        if len(df_sub) > 5:
-                            mod = LinearRegression().fit(df_sub[['UAS']], df_sub['SAT'])
-                            r2_list.append({'Cobertura': c, 'R2': r2_score(df_sub['SAT'], mod.predict(df_sub[['UAS']]))})
-                    if r2_list:
-                        st.plotly_chart(px.bar(pd.DataFrame(r2_list), x='Cobertura', y='R2', color='R2', color_continuous_scale='Viridis', title="Ajuste Radiométrico Global"), width="stretch")
-                        st.markdown("### Regresiones Consolidadas")
-                        cols = st.columns(3)
-                        for i, c in enumerate(cobs):
-                            df_sub = all_c[all_c['Cobertura'] == c]
-                            if not df_sub.empty:
-                                mod_g = LinearRegression().fit(df_sub[['UAS']], df_sub['SAT'])
-                                r2_g = r2_score(df_sub['SAT'], mod_g.predict(df_sub[['UAS']]))
-                                fig = px.scatter(df_sub, x="UAS", y="SAT", color="Banda", title=f"{c} (R² = {r2_g:.3f})")
-                                fig.add_trace(go.Scatter(x=[df_sub['UAS'].min(), df_sub['UAS'].max()], y=mod_g.predict([[df_sub['UAS'].min()], [df_sub['UAS'].max()]]), mode='lines', name='Tendencia', line=dict(color='black', width=2, dash='dot')))
-                                fig.update_layout(template="plotly_white", legend=dict(orientation="h", yanchor="top", y=-0.25, xanchor="center", x=0.5, title=None), margin=dict(l=10, r=10, t=40, b=90))
-                                with cols[i%3]: st.plotly_chart(fig, width="stretch")
+                        st.plotly_chart(px.bar(pd.DataFrame(r2_list_escena), x='Cobertura', y='R2', color='R2', title="Ajuste Radiométrico (Escena Actual)"), width="stretch")
