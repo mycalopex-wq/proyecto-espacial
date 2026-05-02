@@ -223,7 +223,9 @@ with st.sidebar:
     v_file = st.file_uploader("Vector", type=["zip", "gpkg"])
     if v_file:
         st.session_state.raw_gdf = load_vector_preview(v_file)
-        c_clase = st.selectbox("Clase:", [c for c in st.session_state.raw_gdf.columns if c != 'geometry'])
+        # GUARDAR COLUMNA EN SESSION STATE
+        st.session_state.col_clase = st.selectbox("Clase:", [c for c in st.session_state.raw_gdf.columns if c != 'geometry'])
+    
     n_esc = st.number_input("Escenas", 1, 10, 1)
     esc_files = []
     for i in range(1, n_esc + 1):
@@ -240,7 +242,7 @@ with st.sidebar:
         for e in esc_files:
             if e['u']:
                 name = parse_scene_name(e['u'].name)
-                st.session_state.data_escenas[name] = inicializar_base(e['u'], e['s'], m_crs, st.session_state.raw_gdf.to_crs(m_crs), c_clase)
+                st.session_state.data_escenas[name] = inicializar_base(e['u'], e['s'], m_crs, st.session_state.raw_gdf.to_crs(m_crs), st.session_state.col_clase)
         st.session_state.analisis_listo = True
     if st.button("Reiniciar"): st.session_state.clear(); st.rerun()
 
@@ -257,7 +259,8 @@ if st.session_state.get("analisis_listo"):
             if 'pre_m' not in d:
                 with st.spinner(f"Procesando {name}..."):
                     st.image(DOG_GIF_URL, width=200)
-                    df_f, df_c = calcular_firmas(d, c_clase, s_scale, u_l, s_l, s_name)
+                    # USAR VARIABLE DESDE SESSION STATE
+                    df_f, df_c = calcular_firmas(d, st.session_state.col_clase, s_scale, u_l, s_l, s_name)
                     d['df_f'], d['df_c'] = df_f, df_c
                     d['pf'], d['pc'] = pre_generar_plotly(df_f, df_c, s_name)
                     d['pre_m'] = generar_todos_pre_mapas(d, s_scale, u_l, s_l, name)
@@ -268,7 +271,8 @@ if st.session_state.get("analisis_listo"):
                 m = folium.Map(location=[gdf_map.total_bounds[[1,3]].mean(), gdf_map.total_bounds[[0,2]].mean()], zoom_start=15)
                 folium.GeoJson(gdf_map).add_to(m); st_folium(m, width=700, height=400, key=f"f_{name}")
             with col_t:
-                st.plotly_chart(px.pie(d['gdf_diss'], values='area_m2', names=c_clase), use_container_width=True)
+                # CORRECCIÓN NAMEERROR: USAR SESSION STATE
+                st.plotly_chart(px.pie(d['gdf_diss'], values='area_m2', names=st.session_state.col_clase), use_container_width=True)
             
             st.divider()
             t_sub = st.tabs(["Cartografía", "Espectros", "Summary"])
@@ -288,7 +292,7 @@ if st.session_state.get("analisis_listo"):
                     for i, c in enumerate(d['pc']):
                         cols[i%3].plotly_chart(d['pc'][c], use_container_width=True)
 
-    # --- PESTAÑA COMPARACIÓN GLOBAL (RECUPERADA) ---
+    # --- PESTAÑA COMPARACIÓN GLOBAL ---
     with tabs[-1]:
         st.header("Análisis Comparativo Global")
         all_f = pd.concat([st.session_state.data_escenas[n]['df_f'].assign(Escena=n) for n in names])
