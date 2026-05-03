@@ -19,8 +19,8 @@ from matplotlib_scalebar.scalebar import ScaleBar
 import contextily as cx 
 
 st.set_page_config(page_title="Plataforma de Análisis Lite", layout="wide")
-st.title("🛰️ Plataforma de Análisis Satelital (Lite Edition)")
-st.info("💡 Versión optimizada para la nube. Límite de 100MB por archivo raster. Ideal para análisis de cuencas y ecosistemas con Sentinel-2 o Landsat.")
+st.title("Plataforma de Análisis Satelital (Lite Edition)")
+st.info("Versión optimizada para la nube. Límite de 100MB por archivo raster. Ideal para análisis de cuencas y ecosistemas con Sentinel-2 o Landsat.")
 
 DOG_GIF_URL = "https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExYmZlZHV1djJ4NnVuNWRod2JweGIwY3ZoamZkdnV2bGQ3ZXpxcG84MyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/f9vsEmv4NA9ry/giphy.gif"
 
@@ -147,8 +147,8 @@ def generar_mapa_crudo_lite(d, modo, s_list, scale, esc_name):
 # 3. SIDEBAR (LITE)
 # -----------------------------
 with st.sidebar:
-    st.header("1. Vector Zonas (Opcional)")
-    vector_file = st.file_uploader("Subir Vector (ZIP o GPKG)", type=["zip", "gpkg"])
+    st.header("1. Archivo Vectorial (Opcional)")
+    vector_file = st.file_uploader("Capa de Zonas (ZIP o GPKG)", type=["zip", "gpkg"])
     if vector_file:
         preview_gdf = load_vector_preview(vector_file)
         st.session_state.raw_gdf = preview_gdf
@@ -183,7 +183,7 @@ with st.sidebar:
         s_idx_list = [s_b, s_g, s_r, s_re, s_n]
 
     st.divider()
-    if st.button("🚀 Ejecutar Análisis Lite", use_container_width=True):
+    if st.button("Ejecutar Análisis Lite", use_container_width=True):
         first_valid_raster = None
         for e in archivos_escenas:
             if e['sat'] and check_size(e['sat']): first_valid_raster = e['sat']; break
@@ -201,14 +201,14 @@ with st.sidebar:
         else:
             st.error("Sube al menos un archivo satelital válido (menor a 100MB).")
 
-    if st.button("🧹 Reiniciar Entorno"): st.session_state.clear(); st.rerun()
+    if st.button("Reiniciar Entorno"): st.session_state.clear(); st.rerun()
 
 # -----------------------------
 # 4. RENDERIZADO PRINCIPAL
 # -----------------------------
 if st.session_state.get("analisis_listo"):
     names = list(st.session_state.data_escenas.keys())
-    tabs = st.tabs([f"📍 {n}" for n in names])
+    tabs = st.tabs([f"{n}" for n in names])
     
     for idx, name in enumerate(names):
         with tabs[idx]:
@@ -219,7 +219,6 @@ if st.session_state.get("analisis_listo"):
                     df_f = calcular_firmas_lite(d, st.session_state.col_clase, sat_scale, s_idx_list, sat_name)
                     d['df_f'] = df_f
                     
-                    # Generar gráficos de firmas si hay datos
                     d['pf'] = {}
                     if not df_f.empty:
                         for cob in df_f['Cobertura'].unique():
@@ -233,7 +232,6 @@ if st.session_state.get("analisis_listo"):
                         'NDVI': generar_mapa_crudo_lite(d, "NDVI", s_idx_list, sat_scale, name)
                     }
             
-            # --- MAPA BASE Y TORTA ---
             if d['gdf'] is not None:
                 col_m, col_t = st.columns([2, 1])
                 with col_m:
@@ -248,8 +246,7 @@ if st.session_state.get("analisis_listo"):
             
             st.divider()
             
-            # --- CARTOGRAFÍA Y FIRMAS ---
-            t_sub = st.tabs(["🗺️ Cartografía Temática", "🌈 Firmas Espectrales"])
+            t_sub = st.tabs(["Cartografía Temática", "Firmas Espectrales"])
             with t_sub[0]:
                 cols = st.columns(2)
                 cols[0].image(d['pre_m']['RGB'], use_container_width=True, caption="Composición Color Real")
@@ -260,4 +257,4 @@ if st.session_state.get("analisis_listo"):
                     for i, c in enumerate(d['df_f']['Cobertura'].unique()):
                         cols[i%3].plotly_chart(d['pf'][c], use_container_width=True)
                 else: 
-                    st.warning("⚠️ Requiere subir un archivo vectorial y seleccionar una columna de clase para extraer firmas espectrales.")
+                    st.warning("Requiere subir un archivo vectorial y seleccionar una columna de clase para extraer firmas espectrales.")
