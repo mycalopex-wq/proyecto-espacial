@@ -192,9 +192,9 @@ with st.sidebar:
             s_b = st.number_input("Banda Azul", 1)
             s_g = st.number_input("Banda Verde", 2)
             s_r = st.number_input("Banda Roja", 3)
-            s_re = st.number_input("Red Edge", 0)
+            s_re = st.number_input("Red Edge", 4)
         with c2:
-            s_n = st.number_input("Banda NIR", 4)
+            s_n = st.number_input("Banda NIR", 5)
             s_swir1 = st.number_input("SWIR 1", 0)
             s_swir2 = st.number_input("SWIR 2", 0)
         s_idx_list = [s_b, s_g, s_r, s_re, s_n, s_swir1, s_swir2]
