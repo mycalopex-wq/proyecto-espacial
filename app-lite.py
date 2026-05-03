@@ -178,8 +178,8 @@ with st.sidebar:
             s_g = st.number_input("Banda Verde", 2)
             s_r = st.number_input("Banda Roja", 3)
         with c2:
-            s_re = st.number_input("Red Edge", 0)
-            s_n = st.number_input("Banda NIR", 4)
+            s_re = st.number_input("Red Edge", 4)
+            s_n = st.number_input("Banda NIR", 5)
         s_idx_list = [s_b, s_g, s_r, s_re, s_n]
 
     st.divider()
