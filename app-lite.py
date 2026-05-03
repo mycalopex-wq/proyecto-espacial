@@ -5,7 +5,6 @@ from rasterio.io import MemoryFile
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from rasterio.mask import mask
 import tempfile, zipfile, os, re, io, gc
 from rasterio.warp import calculate_default_transform, reproject, Resampling
 from rasterio.transform import from_bounds
@@ -18,18 +17,18 @@ import matplotlib.pyplot as plt
 from matplotlib_scalebar.scalebar import ScaleBar
 import contextily as cx 
 
-st.set_page_config(page_title="Plataforma de Análisis Lite", layout="wide")
+st.set_page_config(page_title="Plataforma de Analisis Lite", layout="wide")
 st.title("Plataforma de Análisis Satelital (Lite Edition)")
 st.info("Versión optimizada para la nube. Límite de 100MB por archivo raster. Ideal para análisis de cuencas y ecosistemas con Sentinel-2 o Landsat.")
-
-DOG_GIF_URL = "https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExYmZlZHV1djJ4NnVuNWRod2JweGIwY3ZoamZkdnV2bGQ3ZXpxcG84MyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/f9vsEmv4NA9ry/giphy.gif"
 
 # -----------------------------
 # 1. FUNCIONES DE PROCESAMIENTO
 # -----------------------------
+MAX_FILE_SIZE_MB = 100
+
 def check_size(f):
-    if f and f.size > 100 * 1024 * 1024:
-        st.sidebar.error(f"El archivo {f.name} pesa más de 100MB. Por favor, recórtalo antes de subirlo.")
+    if f and f.size > MAX_FILE_SIZE_MB * 1024 * 1024:
+        st.sidebar.error(f"El archivo {f.name} pesa más de {MAX_FILE_SIZE_MB}MB. Por favor, recórtalo antes de subirlo.")
         return False
     return True
 
@@ -84,7 +83,7 @@ def inicializar_base_lite(sat_file, master_crs, master_gdf, col_clase):
 def calcular_firmas_lite(data_dict, col_clase, sat_scale, s_idx_list, sat_name):
     if data_dict['gdf_diss'] is None: return pd.DataFrame()
     resultados = []
-    s_b, s_g, s_r, s_re, s_n = s_idx_list
+    s_b, s_g, s_r, s_re, s_n, s_s1, s_s2 = s_idx_list
     
     with rasterio.open(data_dict['sat_path']) as sat_src:
         for _, row in data_dict['gdf_diss'].iterrows():
@@ -102,14 +101,14 @@ def calcular_firmas_lite(data_dict, col_clase, sat_scale, s_idx_list, sat_name):
             
             if len(m_sat) > 0:
                 f_sat = np.nanmean(m_sat, axis=0)
-                b_map = {s_b:"Azul", s_g:"Verde", s_r:"Rojo", s_re:"Red Edge", s_n:"NIR"}
+                b_map = {s_b:"Azul", s_g:"Verde", s_r:"Rojo", s_re:"Red Edge", s_n:"NIR", s_s1:"SWIR 1", s_s2:"SWIR 2"}
                 for b in range(sat_src.count):
-                    if (b+1) in b_map: 
+                    if (b+1) in b_map and (b+1) > 0: 
                         resultados.append({'Cobertura': row[col_clase], 'Banda': b_map[b+1], 'Sensor': sat_name, 'Reflectancia': f_sat[b]})
     return pd.DataFrame(resultados)
 
 def generar_mapa_crudo_lite(d, modo, s_list, scale, esc_name):
-    s_b, s_g, s_r, s_re, s_n = s_list
+    s_b, s_g, s_r, s_re, s_n, s_s1, s_s2 = s_list
     with rasterio.open(d['sat_path']) as base:
         ext = [base.bounds.left, base.bounds.right, base.bounds.bottom, base.bounds.top]
         def get_b(idx):
@@ -126,11 +125,23 @@ def generar_mapa_crudo_lite(d, modo, s_list, scale, esc_name):
         if modo == "NDVI":
             nir, red = get_b(s_n), get_b(s_r)
             ndvi = (nir - red) / (nir + red + 1e-6)
-            im = ax.imshow(ndvi, cmap='RdYlGn', extent=ext, vmin=-1, vmax=1)
+            
+            if not np.isnan(ndvi).all():
+                p2, p98 = np.nanpercentile(ndvi, [2, 98])
+                vmin = min(0.0, p2) if p2 < 0 else p2
+                im = ax.imshow(ndvi, cmap='RdYlGn', extent=ext, vmin=vmin, vmax=p98)
+            else:
+                im = ax.imshow(ndvi, cmap='RdYlGn', extent=ext, vmin=-1, vmax=1)
+                
             plt.colorbar(im, ax=ax, label="NDVI")
             del nir, red, ndvi
+            
         elif "RGB" in modo:
             r, g, b = norm(get_b(s_r)), norm(get_b(s_g)), norm(get_b(s_b))
+            ax.imshow(np.dstack([np.nan_to_num(r), np.nan_to_num(g), np.nan_to_num(b)]), extent=ext)
+            del r, g, b
+        elif "Falso Color SWIR" in modo:
+            r, g, b = norm(get_b(s_s1)), norm(get_b(s_n)), norm(get_b(s_r))
             ax.imshow(np.dstack([np.nan_to_num(r), np.nan_to_num(g), np.nan_to_num(b)]), extent=ext)
             del r, g, b
             
@@ -177,10 +188,12 @@ with st.sidebar:
             s_b = st.number_input("Banda Azul", 1)
             s_g = st.number_input("Banda Verde", 2)
             s_r = st.number_input("Banda Roja", 3)
+            s_re = st.number_input("Red Edge", 0)
         with c2:
-            s_re = st.number_input("Red Edge", 4)
-            s_n = st.number_input("Banda NIR", 5)
-        s_idx_list = [s_b, s_g, s_r, s_re, s_n]
+            s_n = st.number_input("Banda NIR", 4)
+            s_swir1 = st.number_input("SWIR 1", 0)
+            s_swir2 = st.number_input("SWIR 2", 0)
+        s_idx_list = [s_b, s_g, s_r, s_re, s_n, s_swir1, s_swir2]
 
     st.divider()
     if st.button("Ejecutar Análisis Lite", use_container_width=True):
@@ -215,7 +228,6 @@ if st.session_state.get("analisis_listo"):
             d = st.session_state.data_escenas[name]
             if 'pre_m' not in d:
                 with st.spinner(f"Analizando imagen {name}..."):
-                    st.image(DOG_GIF_URL, width=200)
                     df_f = calcular_firmas_lite(d, st.session_state.col_clase, sat_scale, s_idx_list, sat_name)
                     d['df_f'] = df_f
                     
@@ -224,13 +236,15 @@ if st.session_state.get("analisis_listo"):
                         for cob in df_f['Cobertura'].unique():
                             sub_f = df_f[df_f['Cobertura'] == cob]
                             fig = px.line(sub_f, x="Banda", y="Reflectancia", markers=True, title=cob)
-                            fig.update_xaxes(categoryorder='array', categoryarray=["Azul", "Verde", "Rojo", "Red Edge", "NIR"])
+                            fig.update_xaxes(categoryorder='array', categoryarray=["Azul", "Verde", "Rojo", "Red Edge", "NIR", "SWIR 1", "SWIR 2"])
                             d['pf'][cob] = fig
                             
                     d['pre_m'] = {
                         'RGB': generar_mapa_crudo_lite(d, "RGB", s_idx_list, sat_scale, name),
                         'NDVI': generar_mapa_crudo_lite(d, "NDVI", s_idx_list, sat_scale, name)
                     }
+                    if s_swir1 > 0:
+                        d['pre_m']['Falso Color SWIR'] = generar_mapa_crudo_lite(d, "Falso Color SWIR", s_idx_list, sat_scale, name)
             
             if d['gdf'] is not None:
                 col_m, col_t = st.columns([2, 1])
@@ -248,9 +262,16 @@ if st.session_state.get("analisis_listo"):
             
             t_sub = st.tabs(["Cartografía Temática", "Firmas Espectrales"])
             with t_sub[0]:
-                cols = st.columns(2)
-                cols[0].image(d['pre_m']['RGB'], use_container_width=True, caption="Composición Color Real")
-                cols[1].image(d['pre_m']['NDVI'], use_container_width=True, caption="Índice de Vegetación (NDVI)")
+                if s_swir1 > 0:
+                    cols = st.columns(3)
+                    cols[0].image(d['pre_m']['RGB'], use_container_width=True, caption="Composición Color Real")
+                    cols[1].image(d['pre_m']['NDVI'], use_container_width=True, caption="Índice de Vegetación (NDVI)")
+                    cols[2].image(d['pre_m']['Falso Color SWIR'], use_container_width=True, caption="Falso Color (SWIR-NIR-Rojo)")
+                else:
+                    cols = st.columns(2)
+                    cols[0].image(d['pre_m']['RGB'], use_container_width=True, caption="Composición Color Real")
+                    cols[1].image(d['pre_m']['NDVI'], use_container_width=True, caption="Índice de Vegetación (NDVI)")
+
             with t_sub[1]:
                 if not d['df_f'].empty:
                     cols = st.columns(3)
