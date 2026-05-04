@@ -21,8 +21,6 @@ st.set_page_config(page_title="Plataforma de Analisis Lite", layout="wide")
 st.title("Plataforma de Análisis Satelital (Lite Edition)")
 st.info("Versión optimizada para la nube. Límite de 100MB por archivo raster. Ideal para análisis de cuencas y ecosistemas con Sentinel-2 o Landsat.")
 
-DOG_GIF_URL = "https://media0.giphy.com/media/v1.Y2lkPTc5MGI3NjExYmZlZHV1djJ4NnVuNWRod2JweGIwY3ZoamZkdnV2bGQ3ZXpxcG84MyZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/f9vsEmv4NA9ry/giphy.gif"
-
 # -----------------------------
 # 1. FUNCIONES DE PROCESAMIENTO
 # -----------------------------
@@ -232,14 +230,22 @@ if st.session_state.get("analisis_listo"):
             d = st.session_state.data_escenas[name]
             if 'pre_m' not in d:
                 with st.spinner(f"Analizando imagen {name}..."):
-                    st.image(DOG_GIF_URL, width=200)
                     df_f = calcular_firmas_lite(d, st.session_state.col_clase, sat_scale, s_idx_list, sat_name)
                     d['df_f'] = df_f
                     
                     d['pf'] = {}
                     if not df_f.empty:
-                        for cob in df_f['Cobertura'].unique():
-                            sub_f = df_f[df_f['Cobertura'] == cob]
+                        # Agrupación para la firma global
+                        df_global = df_f.groupby(['Cobertura', 'Banda'])['Reflectancia'].mean().reset_index()
+                        
+                        # Generación del gráfico global
+                        fig_global = px.line(df_global, x="Banda", y="Reflectancia", color="Cobertura", markers=True, title="Comparación Global de Coberturas")
+                        fig_global.update_xaxes(categoryorder='array', categoryarray=["Azul", "Verde", "Rojo", "Red Edge", "NIR", "SWIR 1", "SWIR 2"])
+                        d['pf_global'] = fig_global
+
+                        # Generación de gráficos individuales
+                        for cob in df_global['Cobertura'].unique():
+                            sub_f = df_global[df_global['Cobertura'] == cob]
                             fig = px.line(sub_f, x="Banda", y="Reflectancia", markers=True, title=cob)
                             fig.update_xaxes(categoryorder='array', categoryarray=["Azul", "Verde", "Rojo", "Red Edge", "NIR", "SWIR 1", "SWIR 2"])
                             d['pf'][cob] = fig
@@ -279,8 +285,13 @@ if st.session_state.get("analisis_listo"):
 
             with t_sub[1]:
                 if not d['df_f'].empty:
+                    # Mostrar gráfico global primero
+                    st.plotly_chart(d['pf_global'], use_container_width=True)
+                    st.divider()
+                    
+                    st.markdown("### Firmas Individuales por Cobertura")
                     cols = st.columns(3)
-                    for i, c in enumerate(d['df_f']['Cobertura'].unique()):
+                    for i, c in enumerate(d['pf'].keys()):
                         cols[i%3].plotly_chart(d['pf'][c], use_container_width=True)
                 else: 
                     st.warning("Requiere subir un archivo vectorial y seleccionar una columna de clase para extraer firmas espectrales.")
